@@ -1,10 +1,29 @@
 import Cocoa
 
 let TARGET_APPS: Set<String> = [
-    "com.apple.MobileSMS"
+	"com.apple.MobileSMS"
 ]
 
-let ENTER_KEYCODE: Int64 = 36
+let ENTER_KEYCODE: CGKeyCode = 36
+var eventTap: CFMachPort?
+
+func appendLog(_ message: String) {
+	let logURL = FileManager.default.homeDirectoryForCurrentUser
+		.appendingPathComponent(".keyboard_assist_log")
+	let timestamp = ISO8601DateFormatter().string(from: Date())
+	let line = "[\(timestamp) UTC] \(message)\n"
+	if let data = line.data(using: .utf8) {
+		if FileManager.default.fileExists(atPath: logURL.path) { // if already exists
+			if let handle = try? FileHandle(forWritingTo: logURL) {
+				handle.seekToEndOfFile()
+				handle.write(data)
+				handle.closeFile()
+			}
+		} else { // create new file
+			try? data.write(to: logURL, options: .atomic)
+		}
+	}
+}
 
 func eventTapCallback(
 	proxy: CGEventTapProxy,
@@ -12,23 +31,22 @@ func eventTapCallback(
 	event: CGEvent,
 	userInfo: UnsafeMutableRawPointer?
 ) -> Unmanaged<CGEvent>? {
+	if type == .tapDisabledByTimeout {
+		appendLog("tapDisabledByTimeout — re-enabling tap")
+		CGEvent.tapEnable(tap: eventTap!, enable: true)
+		return nil
+	}
 	if type == .keyDown {
 		let keycode = event.getIntegerValueField(.keyboardEventKeycode)
-
-		if keycode == ENTER_KEYCODE {
+		if CGKeyCode(keycode) == ENTER_KEYCODE {
 			let flags = event.flags // Check modifier flags
 			let currentApp = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
-         guard TARGET_APPS.contains(currentApp) else {
+			guard TARGET_APPS.contains(currentApp) else {
 				return Unmanaged.passRetained(event)
-         }
-			let source = CGEventSource(stateID: .hidSystemState)
+			}
 			if flags.contains(.maskShift) { // Already a Shift+Enter
-				let shiftUp = CGEvent(keyboardEventSource: source, virtualKey: 56, keyDown: false)
-				shiftUp?.flags = [] // No modifier
 				event.flags = event.flags.subtracting(.maskShift)
 			} else { // Only a Enter
-				let shiftDown = CGEvent(keyboardEventSource: source, virtualKey: 56, keyDown: true)
-				shiftDown?.flags = .maskShift
 				event.flags = .maskShift
 			}
 		}
@@ -36,20 +54,21 @@ func eventTapCallback(
 	return Unmanaged.passRetained(event) // Return to the Text Field
 }
 
-guard let eventTap = CGEvent.tapCreate(
+eventTap = CGEvent.tapCreate(
 	tap: .cgSessionEventTap,
 	place: .headInsertEventTap,
 	options: .defaultTap,
 	eventsOfInterest: CGEventMask(1 << CGEventType.keyDown.rawValue),
 	callback: eventTapCallback,
 	userInfo: nil
-) else {
-	print("Failed — grant Accessibility permission first")
+)
+guard let eventTap else {
+	appendLog("permission denied")
 	exit(1)
 }
 
+appendLog("app launched")
 let runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTap, 0)
 CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
 CGEvent.tapEnable(tap: eventTap, enable: true)
-
 CFRunLoopRun()
