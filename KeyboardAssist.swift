@@ -1,15 +1,39 @@
 import Cocoa
 
-let TARGET_APPS: Set<String> = [
-	"com.apple.MobileSMS"
-]
-
 let ENTER_KEYCODE: CGKeyCode = 36
 var eventTap: CFMachPort?
+var TARGET_APPS = loadTargetApps()
+
+func loadTargetApps() -> Set<String> {
+	let configDir = FileManager.default.homeDirectoryForCurrentUser
+		.appendingPathComponent(".config/KeyboardAssist")
+	let configURL = configDir.appendingPathComponent("target_apps.txt")
+	if let content = try? String(contentsOf: configURL, encoding: .utf8) {
+		let apps = Set(content
+			.components(separatedBy: .newlines)
+			.map { $0.trimmingCharacters(in: .whitespaces) }
+			.filter { !$0.isEmpty && !$0.hasPrefix("#") })
+		return apps
+	}
+	let defaultContent = """
+	# KeyboardAssist target apps
+	# Add one bundle ID per line
+	com.apple.MobileSMS
+	"""
+
+	do {
+		try FileManager.default.createDirectory(at: configDir, withIntermediateDirectories: true)
+		try defaultContent.write(to: configURL, atomically: true, encoding: .utf8)
+		appendLog("config file created at \(configURL.path)")
+	} catch {
+		appendLog("failed to create config file: \(error)")
+	}
+	return ["com.apple.MobileSMS"]
+}
 
 func appendLog(_ message: String) {
 	let logURL = FileManager.default.homeDirectoryForCurrentUser
-		.appendingPathComponent(".keyboard_assist_log")
+		.appendingPathComponent(".config/KeyboardAssist/keyboard_assist.log")
 	let timestamp = ISO8601DateFormatter().string(from: Date())
 	let line = "[\(timestamp) UTC] \(message)\n"
 	if let data = line.data(using: .utf8) {
@@ -21,6 +45,7 @@ func appendLog(_ message: String) {
 			}
 		} else { // create new file
 			try? data.write(to: logURL, options: .atomic)
+			appendLog("log file created")
 		}
 	}
 }
